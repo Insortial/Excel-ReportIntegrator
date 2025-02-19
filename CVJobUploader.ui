@@ -116,48 +116,6 @@
       <string>Submit CVJ</string>
      </property>
     </widget>
-    <widget class="QCheckBox" name="otherCheckBox">
-     <property name="geometry">
-      <rect>
-       <x>130</x>
-       <y>120</y>
-       <width>51</width>
-       <height>17</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>Other</string>
-     </property>
-     <property name="checked">
-      <bool>true</bool>
-     </property>
-    </widget>
-    <widget class="QCheckBox" name="standardCheckBox">
-     <property name="geometry">
-      <rect>
-       <x>10</x>
-       <y>120</y>
-       <width>71</width>
-       <height>17</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>Standard</string>
-     </property>
-    </widget>
-    <widget class="QCheckBox" name="draftCheckBox">
-     <property name="geometry">
-      <rect>
-       <x>80</x>
-       <y>120</y>
-       <width>51</width>
-       <height>17</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>Draft</string>
-     </property>
-    </widget>
     <widget class="QLabel" name="errorTag">
      <property name="geometry">
       <rect>

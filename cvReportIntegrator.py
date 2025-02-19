@@ -1,5 +1,6 @@
 import pyodbc
 import sys
+import configparser
 import pandas as pd
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
@@ -10,21 +11,12 @@ from PyQt6 import QtCore, uic, QtGui
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QPushButton, QVBoxLayout, QLineEdit, QMainWindow
 from CVJobUploader import Ui_MainWindow
 
-#Database connections
-server_string = r"server=RENQ-PC\CV;Database=EXCELP&D;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}"
-server_url = URL.create("mssql+pyodbc", query={"odbc_connect": server_string})
-server_engine = create_engine(server_url)
+#Database engines
+server_string = None
+server_session = None
+cv_engine = None
+report_engine = None
 
-Server_session = sessionmaker(bind=server_engine)
-server_session = Server_session()
-
-cv_string = r"server=ECSERVER\SOLID;Database=CVData_2021;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}"
-cv_url = URL.create("mssql+pyodbc", query={"odbc_connect": cv_string})
-cv_engine = create_engine(cv_url)
-
-report_string = r"DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=C:\Cabinet Vision\Users\RenQ\report.mdb;"
-report_url = URL.create("access+pyodbc", query={"odbc_connect": report_string})
-report_engine = create_engine(report_url)
 
 class MyWindow(QMainWindow):
     def __init__(self):
@@ -54,13 +46,12 @@ class MyWindow(QMainWindow):
 
         #Connecting function to buttons
         self.ui.jobIDSubmit.clicked.connect(self.retrieveJobID)
-        """ self.ui.newPlanButton.clicked.connect(self.switchPlanWidget) """
         self.ui.submitCVJ.clicked.connect(self.pushTables)
 
         #Setting toggle for checkboxes
-        self.ui.otherCheckBox.clicked.connect(lambda: self.toggleCheckBoxes(type='other'))
+        """ self.ui.otherCheckBox.clicked.connect(lambda: self.toggleCheckBoxes(type='other'))
         self.ui.draftCheckBox.clicked.connect(lambda: self.toggleCheckBoxes(type='draft'))
-        self.ui.standardCheckBox.clicked.connect(lambda: self.toggleCheckBoxes(type='standard'))
+        self.ui.standardCheckBox.clicked.connect(lambda: self.toggleCheckBoxes(type='standard')) """
         
         #Connecting method to combobox
         self.ui.lotDropDown.activated.connect(self.dropDownSelect)
@@ -71,7 +62,7 @@ class MyWindow(QMainWindow):
 
         self.retrieveTables()
 
-    def toggleCheckBoxes(self, type):
+    """ def toggleCheckBoxes(self, type):
         if(type == 'standard'):
             self.ui.otherCheckBox.setChecked(False)
             self.ui.draftCheckBox.setChecked(False)
@@ -80,14 +71,14 @@ class MyWindow(QMainWindow):
             self.ui.otherCheckBox.setChecked(False)
         elif(type == 'other'):
             self.ui.draftCheckBox.setChecked(False)
-            self.ui.standardCheckBox.setChecked(False)
+            self.ui.standardCheckBox.setChecked(False) """
 
     def dropDownSelect(self, index):
-        self.cvj_exists = self.drop_down_values[index][1]
+        self.cvj_exists = self.drop_down_values[index][2] is not None
         self.updateCVJStatus(self.cvj_exists)
 
-    def updateCVJStatus(self, status):
-        if status:
+    def updateCVJStatus(self, cvj_exists):
+        if cvj_exists:
             text = "CVJ Exists"
             color = '#d9a03e'
         else:
@@ -97,24 +88,11 @@ class MyWindow(QMainWindow):
         self.ui.cvjStatusLabel.setText(text)
         self.ui.cvjStatusLabel.setStyleSheet(f"color: {color}")
 
-    """ def switchPlanWidget(self):
-        if(not self.newPlan):
-            self.ui.planInput.show()
-            self.ui.lotDropDown.hide()
-            self.ui.planInput.setText("")
-            self.ui.newPlanButton.setText("Select Plan")
-        else:
-            self.ui.lotDropDown.show()
-            self.ui.planInput.hide()
-            self.ui.newPlanButton.setText("Add New Plan")
-        
-        self.newPlan = not self.newPlan """
-
     def retrieveJobID(self):
         self.job_id = self.ui.jobIDInput.text()
 
         try:
-            connection = pyodbc.connect(r"server=RENQ-PC\CV;Database=EXCELP&D;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}")
+            connection = pyodbc.connect(server_string)
             cursor = connection.cursor()
 
             query = """SELECT [Customer Name], [Project Name], [Phase] 
@@ -156,7 +134,7 @@ class MyWindow(QMainWindow):
             if len(lots) > 0:
                 self.drop_down_values = lots
                 self.ui.lotDropDown.addItems([item[0] for item in lots])
-                self.cvj_exists = lots[0][1] is not None
+                self.cvj_exists = lots[0][2] is not None
                 self.updateCVJStatus(self.cvj_exists)
 
     def retrieveTables(self):
@@ -240,16 +218,24 @@ class MyWindow(QMainWindow):
             df = pd.read_sql_query(sa.text("SELECT * FROM [Parts]"), conn)
             self.parts = df
 
-            """ df = pd.read_sql_query(sa.text("SELECT C.Name, P.* FROM [Parts] AS P INNER JOIN [CxMaterial] AS C ON P.[Material ID] = C.ID"), conn)
-            parts_df = df """
+    def updateDoorAndCabinetCounts(self, cabinets, doors, drawers, lotID):
+        cabinetCount = len(cabinets)
+        doorCount = len(doors)
+        drawerCount = len(drawers)
+
+        with server_engine.begin() as conn:
+            result = conn.execute(sa.text(f"SELECT COUNT(*) FROM [Lot Order Details] WHERE [Lot ID] = {lotID}"))
+            rows = result.fetchall()
+
+            if(rows[0][0] == 1):
+                conn.execute(sa.text(f""" UPDATE [Lot Order Details] 
+                                    SET [Cabinet Count] = {cabinetCount}, [Door Qty] = {doorCount}, [Drawer Box Qty] = {drawerCount}
+                                    WHERE [Lot ID] = {lotID} """))
+
 
     def pushTables(self):
-        #Determining size of materials given parts of a lot. Old PSNC Version
-
-        #Determining size of materials given parts of a lot. Connection to CV_2021 on ecserver. Materials for cabinet vision 2021 can all be found on CVData_2021 but sizes are not stored there.
-        #For CV11 it can be found on CxMaterials_12
         lotIndex = self.ui.lotDropDown.currentIndex()
-        lot = self.drop_down_values[lotIndex][1]
+        lotID = self.drop_down_values[lotIndex][1]
 
         """ if(len(self.ui.lotDropDown.currentText()) == 0):
             self.ui.errorTag.show()
@@ -259,7 +245,7 @@ class MyWindow(QMainWindow):
 
         with server_engine.begin() as conn:
             #Delete JobInfo and all associated rows 
-            conn.execute(sa.text(f"EXEC delete_CVJ @jobID = {self.job_id}, @plan = '{lot}';"))
+            conn.execute(sa.text(f"EXEC delete_CVJ @lotID = {lotID};"))
             conn.commit()
 
 
@@ -268,7 +254,7 @@ class MyWindow(QMainWindow):
             cabinetID_dict = {}
 
             #Adding JobInfo to Table
-            self.job_info.insert(1, "lotIDFK", [planIDFK], True)
+            self.job_info.insert(1, "lotIDFK", [lotID], True)
             for _, row in self.job_info.iterrows():
                 job_info_session = server_session.merge(JobInfo(**row.to_dict()))
                 server_session.flush()
@@ -343,22 +329,54 @@ class MyWindow(QMainWindow):
             print("Finished Adding Stock Cabinets")
 
             #Adding Parts to Table 
-            self.parts["Quantity"] = self.parts.groupby(['Cabinet ID', 'Part ID'])['Cabinet ID'].transform('size')
+            """ self.parts["Quantity"] = self.parts.groupby(['Cabinet ID', 'Part ID'])['Cabinet ID'].transform('size')
             unique_parts = self.parts.drop_duplicates(subset=['Cabinet ID', 'Part ID'], keep='first').copy()
             print(unique_parts)
             unique_parts["jobInfoIDFK"] = job_info_id
             unique_parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
-            unique_parts = unique_parts.drop(columns=["Cabinet ID", "Image"])
-            unique_parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False)
+            unique_parts = unique_parts.drop(columns=["Cabinet ID", "Image"]) """
+
+            print(self.parts)
+            self.parts["jobInfoIDFK"] = job_info_id
+            self.parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
+            self.parts = self.parts.drop(columns=["Cabinet ID", "Image", "IntBandMaterial", "IntBandColor", "ExtBandMaterial", "ExtBandColor", "DoorBandMaterial", "DoorBandColor", "TextureFace", "TextureBack", "TextureEdge", "Parameters"])
+            self.parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False)
             print("Finished Adding Parts")
 
+            self.updateDoorAndCabinetCounts(self.cabinet_info, self.doors, self.drawers, lotID)
 
             #Reset Tables
             self.retrieveTables()
 
+            #Update Lot List
+            self.retrieveJobID()
+
 
 
 if __name__ == "__main__":
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
+    prodServer = config['DEFAULT']['prodServer']
+    reportURL = config['DEFAULT']['reportURL']
+
+    #Database connections
+    server_string = f"server={prodServer};Database=EXCELP&D;Trusted_Connection=Yes;Driver={{ODBC Driver 17 for SQL Server}}"
+    server_url = URL.create("mssql+pyodbc", query={"odbc_connect": server_string})
+    server_engine = create_engine(server_url)
+
+    Server_session = sessionmaker(bind=server_engine)
+    server_session = Server_session()
+
+    cv_string = r"server=ECSERVER\SOLID;Database=CVData_2021;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}"
+    cv_url = URL.create("mssql+pyodbc", query={"odbc_connect": cv_string})
+    cv_engine = create_engine(cv_url)
+
+    report_string = f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={reportURL}"
+    report_url = URL.create("access+pyodbc", query={"odbc_connect": report_string})
+    report_engine = create_engine(report_url)
+
+
     app = QApplication(sys.argv)
     window = MyWindow()
     window.show()

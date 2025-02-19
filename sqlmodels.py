@@ -3,21 +3,26 @@ from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
+class PlanBuilder(Base):
+    __tablename__ = 'PlanBuilder'  # SQL table name
 
-""" class Plan(Base):
-    __tablename__ = 'Plans'  # SQL table name
+    planBuilderID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
+    builderName = Column(String(100), nullable=False)
 
-    planID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
-    jobIDFK = Column(Integer, nullable=False)
-    planNumber = Column(String(50), nullable=True)
-    thisPhaseOnly = Column(Boolean, nullable=True) """
+class PlanProject(Base):
+    __tablename__ = 'PlanProject'  # SQL table name
+
+    planProjectID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
+    planBuilderIDFK = Column(Integer, nullable=False)
+    projectName = Column(String(50), nullable=False)
 
 class JobInfo(Base):
     __tablename__ = 'CV_JobInfo'  # SQL table name
 
     jobInfoID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
-    lotIDFK = Column(Integer, nullable=False)
-    planIDFK = Column(Integer, nullable=False)  
+    lotIDFK = Column(Integer, nullable=True)
+    planProjectIDFK = Column(Integer, nullable=True)
+    planNumber = Column(String(50), nullable=True)
     Job_Name = Column("Job Name", String(128), nullable=True)
     Job_Number = Column("Job Number", String(50), nullable=True)
     Key_Name = Column("Key Name", String(50), nullable=True)
