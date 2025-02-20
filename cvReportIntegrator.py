@@ -1,5 +1,6 @@
 import pyodbc
 import sys
+import time
 import configparser
 import pandas as pd
 import sqlalchemy as sa
@@ -9,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlmodels import JobInfo, Rooms, Cabinets
 from PyQt6 import QtCore, uic, QtGui
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QPushButton, QVBoxLayout, QLineEdit, QMainWindow
+from PyQt6.QtCore import QTimer
 from CVJobUploader import Ui_MainWindow
 
 #Database engines
@@ -146,6 +148,7 @@ class MyWindow(QMainWindow):
             df = pd.read_sql_query(sa.text("SELECT * FROM [Job Info]"), conn)
 
             self.job_name = df['Job Name'][0]
+            self.job_number = df['Job Number'][0]
 
             selected_columns = ["Job Number", "Job Name", "Key Name", "Customer ID", "Customer Name", "Customer Address"]
             df = df[selected_columns]
@@ -218,6 +221,9 @@ class MyWindow(QMainWindow):
             df = pd.read_sql_query(sa.text("SELECT * FROM [Parts]"), conn)
             self.parts = df
 
+            self.ui.jobDescription.setText(f"Description: {self.job_name}")
+            self.ui.jobNumber.setText(f"Number: {self.job_number}")
+
     def updateDoorAndCabinetCounts(self, cabinets, doors, drawers, lotID):
         cabinetCount = len(cabinets)
         doorCount = len(doors)
@@ -232,6 +238,17 @@ class MyWindow(QMainWindow):
                                     SET [Cabinet Count] = {cabinetCount}, [Door Qty] = {doorCount}, [Drawer Box Qty] = {drawerCount}
                                     WHERE [Lot ID] = {lotID} """))
 
+    def updateResponse(self, success):
+        self.ui.errorTag.show()
+        if(success):
+            self.ui.errorTag.setStyleSheet("color: #7fcf42")
+            self.ui.errorTag.setText("Successfully submitted")
+        else:
+            self.ui.errorTag.setStyleSheet("color: #ff0000")
+            self.ui.errorTag.setText("Submission failed")
+
+        QTimer.singleShot(5000, lambda: self.ui.errorTag.hide())
+
 
     def pushTables(self):
         lotIndex = self.ui.lotDropDown.currentIndex()
@@ -242,109 +259,113 @@ class MyWindow(QMainWindow):
             return
         else:
             self.ui.errorTag.hide() """
+        try: 
+            with server_engine.begin() as conn:
+                #Delete JobInfo and all associated rows 
+                conn.execute(sa.text(f"EXEC delete_CVJ @lotID = {lotID};"))
+                conn.commit()
 
-        with server_engine.begin() as conn:
-            #Delete JobInfo and all associated rows 
-            conn.execute(sa.text(f"EXEC delete_CVJ @lotID = {lotID};"))
-            conn.commit()
 
+            with server_engine.begin() as conn:
+                roomID_dict = {}
+                cabinetID_dict = {}
 
-        with server_engine.begin() as conn:
-            roomID_dict = {}
-            cabinetID_dict = {}
+                #Adding JobInfo to Table
+                self.job_info.insert(1, "lotIDFK", [lotID], True)
+                for _, row in self.job_info.iterrows():
+                    job_info_session = server_session.merge(JobInfo(**row.to_dict()))
+                    server_session.flush()
+                    job_info_id = job_info_session.jobInfoID
 
-            #Adding JobInfo to Table
-            self.job_info.insert(1, "lotIDFK", [lotID], True)
-            for _, row in self.job_info.iterrows():
-                job_info_session = server_session.merge(JobInfo(**row.to_dict()))
-                server_session.flush()
-                job_info_id = job_info_session.jobInfoID
+                server_session.commit()
+                print("Finished Adding JobInfo")   
 
-            server_session.commit()
-            print("Finished Adding JobInfo")   
+                #Adding Rooms to Table
+                self.room_info["jobInfoIDFK"] = job_info_id
 
-            #Adding Rooms to Table
-            self.room_info["jobInfoIDFK"] = job_info_id
+                for _, row in self.room_info.iterrows():
+                    instance = server_session.merge(Rooms(**row.to_dict()))
+                    server_session.flush()
+                    roomID_dict[instance.RoomNumber] = instance.RoomID
+                    
+                server_session.commit()
+                print("Finished Adding Rooms")   
 
-            for _, row in self.room_info.iterrows():
-                instance = server_session.merge(Rooms(**row.to_dict()))
-                server_session.flush()
-                roomID_dict[instance.RoomNumber] = instance.RoomID
-                
-            server_session.commit()
-            print("Finished Adding Rooms")   
+                #Adding Cabinets to Table
+                self.cabinet_info["roomIDFK"] = self.cabinet_info["Room ID"].map(roomID_dict)
+                self.cabinet_info = self.cabinet_info.drop(columns=['Room ID', 'Image'])
 
-            #Adding Cabinets to Table
-            self.cabinet_info["roomIDFK"] = self.cabinet_info["Room ID"].map(roomID_dict)
-            self.cabinet_info = self.cabinet_info.drop(columns=['Room ID', 'Image'])
+                for _, row in self.cabinet_info.iterrows():
+                    instance = server_session.merge(Cabinets(**row.to_dict())) 
+                    server_session.flush()
+                    cabinetID_dict[instance.cabinetNumber] = instance.Cabinet_ID
+                cabinetID_dict[0] = 0
+                server_session.commit()
+                print("Finished Adding Cabinets")    
 
-            for _, row in self.cabinet_info.iterrows():
-                instance = server_session.merge(Cabinets(**row.to_dict())) 
-                server_session.flush()
-                cabinetID_dict[instance.cabinetNumber] = instance.Cabinet_ID
-            cabinetID_dict[0] = 0
-            server_session.commit()
-            print("Finished Adding Cabinets")    
+                #Adding Molding to Table
+                self.molding["roomIDFK"] = self.molding["Room ID"].map(roomID_dict)
+                self.molding = self.molding.drop(columns='Room ID')
+                self.molding.to_sql("CV_Molding", server_engine, if_exists="append", index=False)
+                print("Finished Adding Molding")
 
-            #Adding Molding to Table
-            self.molding["roomIDFK"] = self.molding["Room ID"].map(roomID_dict)
-            self.molding = self.molding.drop(columns='Room ID')
-            self.molding.to_sql("CV_Molding", server_engine, if_exists="append", index=False)
-            print("Finished Adding Molding")
+                #Adding Tops to Table
+                self.tops["roomIDFK"] = self.tops["Room ID"].map(roomID_dict)
+                self.tops = self.tops.drop(columns='Room ID')
+                self.tops.to_sql("CV_Tops", server_engine, if_exists="append", index=False)
+                print("Finished Adding Tops")
 
-            #Adding Tops to Table
-            self.tops["roomIDFK"] = self.tops["Room ID"].map(roomID_dict)
-            self.tops = self.tops.drop(columns='Room ID')
-            self.tops.to_sql("CV_Tops", server_engine, if_exists="append", index=False)
-            print("Finished Adding Tops")
+                #Adding Doors to Table
+                self.doors["cabinetIDFK"] = self.doors["Cabinet ID"].map(cabinetID_dict)
+                self.doors = self.doors.drop(columns=['Cabinet ID', 'Image'])
+                self.doors.to_sql("CV_Doors", server_engine, if_exists="append", index=False)
+                print("Finished Adding Doors")
 
-            #Adding Doors to Table
-            self.doors["cabinetIDFK"] = self.doors["Cabinet ID"].map(cabinetID_dict)
-            self.doors = self.doors.drop(columns=['Cabinet ID', 'Image'])
-            self.doors.to_sql("CV_Doors", server_engine, if_exists="append", index=False)
-            print("Finished Adding Doors")
+                #Adding Drawers to Table
+                self.drawers["cabinetIDFK"] = self.drawers["Cabinet ID"].map(cabinetID_dict)
+                self.drawers = self.drawers.drop(columns='Cabinet ID')
+                self.drawers.to_sql("CV_Drawers", server_engine, if_exists="append", index=False)
+                print("Finished Adding Drawers")
 
-            #Adding Drawers to Table
-            self.drawers["cabinetIDFK"] = self.drawers["Cabinet ID"].map(cabinetID_dict)
-            self.drawers = self.drawers.drop(columns='Cabinet ID')
-            self.drawers.to_sql("CV_Drawers", server_engine, if_exists="append", index=False)
-            print("Finished Adding Drawers")
+                #Adding Rollouts to Table
+                self.rollouts["cabinetIDFK"] = self.rollouts["Cabinet ID"].map(cabinetID_dict)
+                self.rollouts = self.rollouts.drop(columns='Cabinet ID')
+                self.rollouts.to_sql("CV_Rollouts", server_engine, if_exists="append", index=False)
+                print("Finished Adding Rollouts")
 
-            #Adding Rollouts to Table
-            self.rollouts["cabinetIDFK"] = self.rollouts["Cabinet ID"].map(cabinetID_dict)
-            self.rollouts = self.rollouts.drop(columns='Cabinet ID')
-            self.rollouts.to_sql("CV_Rollouts", server_engine, if_exists="append", index=False)
-            print("Finished Adding Rollouts")
+                """ #Adding Sections to Table (NOT USABLE)
+                sections.insert(0, "cabinetIDFK", cabinet_id, True)
+                drawers = drawers.drop(columns='Cabinet ID')
+                sections.to_sql("CV_Sections", server_engine, if_exists="append", index=False)
+                print("Finished Adding Sections")"""
 
-            """ #Adding Sections to Table (NOT USABLE)
-            sections.insert(0, "cabinetIDFK", cabinet_id, True)
-            drawers = drawers.drop(columns='Cabinet ID')
-            sections.to_sql("CV_Sections", server_engine, if_exists="append", index=False)
-            print("Finished Adding Sections")"""
+                #Adding Stock Cabinets to Table
+                self.scabinets["cabinetIDFK"] = self.scabinets["SCabinet ID"].map(cabinetID_dict)
+                self.scabinets = self.scabinets.drop(columns='SCabinet ID')
+                self.scabinets.to_sql("CV_StockCabinets", server_engine, if_exists="append", index=False)
+                print("Finished Adding Stock Cabinets")
 
-            #Adding Stock Cabinets to Table
-            self.scabinets["cabinetIDFK"] = self.scabinets["SCabinet ID"].map(cabinetID_dict)
-            self.scabinets = self.scabinets.drop(columns='SCabinet ID')
-            self.scabinets.to_sql("CV_StockCabinets", server_engine, if_exists="append", index=False)
-            print("Finished Adding Stock Cabinets")
+                #Adding Parts to Table 
+                """ self.parts["Quantity"] = self.parts.groupby(['Cabinet ID', 'Part ID'])['Cabinet ID'].transform('size')
+                unique_parts = self.parts.drop_duplicates(subset=['Cabinet ID', 'Part ID'], keep='first').copy()
+                print(unique_parts)
+                unique_parts["jobInfoIDFK"] = job_info_id
+                unique_parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
+                unique_parts = unique_parts.drop(columns=["Cabinet ID", "Image"]) """
 
-            #Adding Parts to Table 
-            """ self.parts["Quantity"] = self.parts.groupby(['Cabinet ID', 'Part ID'])['Cabinet ID'].transform('size')
-            unique_parts = self.parts.drop_duplicates(subset=['Cabinet ID', 'Part ID'], keep='first').copy()
-            print(unique_parts)
-            unique_parts["jobInfoIDFK"] = job_info_id
-            unique_parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
-            unique_parts = unique_parts.drop(columns=["Cabinet ID", "Image"]) """
+                print(self.parts)
+                self.parts["jobInfoIDFK"] = job_info_id
+                self.parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
+                self.parts = self.parts.drop(columns=["Cabinet ID", "Image", "IntBandMaterial", "IntBandColor", "ExtBandMaterial", "ExtBandColor", "DoorBandMaterial", "DoorBandColor", "TextureFace", "TextureBack", "TextureEdge", "Parameters"])
+                self.parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False)
+                print("Finished Adding Parts")
 
-            print(self.parts)
-            self.parts["jobInfoIDFK"] = job_info_id
-            self.parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
-            self.parts = self.parts.drop(columns=["Cabinet ID", "Image", "IntBandMaterial", "IntBandColor", "ExtBandMaterial", "ExtBandColor", "DoorBandMaterial", "DoorBandColor", "TextureFace", "TextureBack", "TextureEdge", "Parameters"])
-            self.parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False)
-            print("Finished Adding Parts")
-
-            self.updateDoorAndCabinetCounts(self.cabinet_info, self.doors, self.drawers, lotID)
-
+                self.updateDoorAndCabinetCounts(self.cabinet_info, self.doors, self.drawers, lotID)
+        except pyodbc.Error as e:
+            print(f"Error: {e}")
+            self.updateResponse(False)
+        finally:
+            self.updateResponse(True)
             #Reset Tables
             self.retrieveTables()
 
