@@ -98,9 +98,9 @@ class MyWindow(QMainWindow):
             cursor = connection.cursor()
 
             query = """SELECT [Customer Name], [Project Name], [Phase] 
-                       FROM [Jobs] AS J 
-                       INNER JOIN [Projects] AS P ON P.[Project ID] = J.[Project IDFK] 
-                       INNER JOIN [Customers] AS C ON C.[Customer ID] = P.[Customer IDFK]
+                       FROM [EXCELP&D].[dbo].[Jobs] AS J 
+                       INNER JOIN [EXCELP&D].[dbo].[Projects] AS P ON P.[Project ID] = J.[Project IDFK] 
+                       INNER JOIN [EXCELP&D].[dbo].[Customers] AS C ON C.[Customer ID] = P.[Customer IDFK]
                        WHERE [Job ID] = ?"""
             cursor.execute(query, self.job_id)
 
@@ -108,7 +108,7 @@ class MyWindow(QMainWindow):
 
             query = """
                         SELECT [Lot Number], [Lot ID], CJ.jobInfoID
-                        FROM Lots AS L
+                        FROM [EXCELP&D].[dbo].[Lots] AS L
                         LEFT JOIN CV_JobInfo AS CJ ON L.[Lot ID] = CJ.lotIDFK
                         WHERE [Job IDFK] = ?
                     """
@@ -230,11 +230,11 @@ class MyWindow(QMainWindow):
         drawerCount = len(drawers)
 
         with server_engine.begin() as conn:
-            result = conn.execute(sa.text(f"SELECT COUNT(*) FROM [Lot Order Details] WHERE [Lot ID] = {lotID}"))
+            result = conn.execute(sa.text(f"SELECT COUNT(*) FROM [EXCELP&D].[dbo].[Lot Order Details] WHERE [Lot ID] = {lotID}"))
             rows = result.fetchall()
 
             if(rows[0][0] == 1):
-                conn.execute(sa.text(f""" UPDATE [Lot Order Details] 
+                conn.execute(sa.text(f""" UPDATE [EXCELP&D].[dbo].[Lot Order Details] 
                                     SET [Cabinet Count] = {cabinetCount}, [Door Qty] = {doorCount}, [Drawer Box Qty] = {drawerCount}
                                     WHERE [Lot ID] = {lotID} """))
 
@@ -382,7 +382,7 @@ if __name__ == "__main__":
     reportURL = config['DEFAULT']['reportURL']
 
     #Database connections
-    server_string = f"server={prodServer};Database=EXCELP&D;Trusted_Connection=Yes;Driver={{ODBC Driver 17 for SQL Server}}"
+    server_string = f"server={prodServer};Database=EXCELCVJ;Trusted_Connection=Yes;Driver={{ODBC Driver 17 for SQL Server}}"
     server_url = URL.create("mssql+pyodbc", query={"odbc_connect": server_string})
     server_engine = create_engine(server_url)
 

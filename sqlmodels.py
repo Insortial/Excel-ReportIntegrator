@@ -9,6 +9,13 @@ class PlanBuilder(Base):
     planBuilderID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
     builderName = Column(String(100), nullable=False)
 
+class PlanEO(Base):
+    __tablename__ = 'PlanEO'  # SQL table name
+
+    eoID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
+    planProjectIDFK = Column(Integer, nullable=False)
+    eoPhase = Column(String(10), nullable=False)
+
 class PlanProject(Base):
     __tablename__ = 'PlanProject'  # SQL table name
 
@@ -21,7 +28,7 @@ class JobInfo(Base):
 
     jobInfoID = Column(Integer, primary_key=True, autoincrement=True)  # Primary key column
     lotIDFK = Column(Integer, nullable=True)
-    planProjectIDFK = Column(Integer, nullable=True)
+    eoIDFK = Column(Integer, nullable=True)
     planNumber = Column(String(50), nullable=True)
     Job_Name = Column("Job Name", String(128), nullable=True)
     Job_Number = Column("Job Number", String(50), nullable=True)

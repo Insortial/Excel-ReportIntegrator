@@ -1,6 +1,7 @@
 import pyodbc
 import sys
 import pandas as pd
+import configparser
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.engine import URL
@@ -8,22 +9,6 @@ from sqlalchemy import create_engine
 from sqlmodels import JobInfo, PlanBuilder, PlanProject, Rooms, Cabinets
 from PyQt6.QtWidgets import QApplication, QMainWindow
 from CVPlanUploader import Ui_MainWindow
-
-#Database connections
-server_string = r"server=RENQ-PC\CV;Database=EXCELP&D;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}"
-server_url = URL.create("mssql+pyodbc", query={"odbc_connect": server_string})
-server_engine = create_engine(server_url)
-
-Server_session = sessionmaker(bind=server_engine)
-server_session = Server_session()
-
-cv_string = r"server=ECSERVER\SOLID;Database=CVData_2021;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}"
-cv_url = URL.create("mssql+pyodbc", query={"odbc_connect": cv_string})
-cv_engine = create_engine(cv_url)
-
-report_string = r"DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=C:\Cabinet Vision\Users\RenQ\report.mdb;"
-report_url = URL.create("access+pyodbc", query={"odbc_connect": report_string})
-report_engine = create_engine(report_url)
 
 class MyWindow(QMainWindow):
     def __init__(self):
@@ -49,11 +34,13 @@ class MyWindow(QMainWindow):
         self.customer_drop_downs = []
         self.project_drop_downs = []
         self.plan_drop_downs = []
+        self.eo_drop_downs = []
 
         #Adding default values to dropdowns
         self.ui.builderDropdown.addItem("None")
         self.ui.projectDropdown.addItem("None")
         self.ui.planDropdown.addItem("None")
+        self.ui.eoDropdown.addItem("None")
 
         #Setting up Job Variables
         self.job_id = ''
@@ -62,11 +49,16 @@ class MyWindow(QMainWindow):
         self.drop_down_values = []
         
         self.newPlan = False
+        self.newEO = False
         self.newProject = False
         self.newBuilder = False
 
+        #Hide status label
+        self.ui.statusLabel.hide()
+
         #Connecting function to buttons
         self.ui.addPlan.clicked.connect(self.planButton)
+        self.ui.addEO.clicked.connect(self.EOButton)
         self.ui.addProject.clicked.connect(self.projectButton)
         self.ui.addBuilder.clicked.connect(self.builderButton)
         self.ui.submitCVJ.clicked.connect(self.pushTables)
@@ -74,17 +66,19 @@ class MyWindow(QMainWindow):
         #Connecting method to combobox
         self.ui.builderDropdown.activated.connect(self.selectBuilder)
         self.ui.projectDropdown.activated.connect(self.selectProject)
+        self.ui.eoDropdown.activated.connect(self.selectEO)
 
         self.ui.planInput.hide()
         self.ui.projectInput.hide()
         self.ui.builderInput.hide()
+        self.ui.eoInput.hide()
 
         self.retrieveTables()
         self.retrieveBuilders()
 
     def fetchDropDowns(self, query, params=[]):
         try:
-            connection = pyodbc.connect(r"server=RENQ-PC\CV;Database=EXCELP&D;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}")
+            connection = pyodbc.connect(server_string)
             cursor = connection.cursor()
 
             if(len(params) > 0):
@@ -105,6 +99,7 @@ class MyWindow(QMainWindow):
         return dropDownValues
 
     def retrieveBuilders(self):
+        self.ui.builderDropdown.clear()
         try:
             query = """SELECT planBuilderID, builderName
                        FROM [PlanBuilder]"""
@@ -114,6 +109,7 @@ class MyWindow(QMainWindow):
 
         if len(customers) > 0:
             self.customer_drop_downs = customers
+            self.ui.builderDropdown.addItem("None")
             self.ui.builderDropdown.addItems([item[1] for item in customers])
 
     def selectBuilder(self, index):
@@ -130,6 +126,9 @@ class MyWindow(QMainWindow):
         self.ui.planDropdown.clear()
         self.ui.projectDropdown.addItem("None")
         self.ui.planDropdown.addItem("None")
+        
+        if(index == 0):
+            return
 
         if len(projects) > 0:
             self.project_drop_downs = projects
@@ -137,18 +136,44 @@ class MyWindow(QMainWindow):
 
     def selectProject(self, index):
         try:
-            query = """SELECT jobInfoID, planNumber, [Job Name]
-                       FROM [CV_JobInfo]
-                       WHERE planProjectIDFK = ?"""
-            plans = self.fetchDropDowns(query, [self.project_drop_downs[index - 1][0]])
+            query = """ SELECT eoID, eoPhase, planProjectIDFK
+                       FROM [PlanEO]
+                       WHERE planProjectIDFK = ? """
+            eos = self.fetchDropDowns(query, [self.project_drop_downs[index - 1][0]])
 
         except pyodbc.Error as e:
             print(f"Error: {e}")
 
         self.ui.planDropdown.clear()
+        self.ui.planDropdown.addItem("None")
+        self.ui.eoDropdown.clear()
+        self.ui.eoDropdown.addItem("None")
+
+        if(index == 0):
+            return
+
+        if len(eos) > 0:
+            self.eo_drop_downs = eos
+            self.ui.eoDropdown.addItems([item[1] for item in eos])
+
+    def selectEO(self, index):
+        try:
+            query = """SELECT jobInfoID, planNumber, [Job Name]
+                       FROM [CV_JobInfo]
+                       WHERE eoIDFK = ?"""
+            plans = self.fetchDropDowns(query, [self.eo_drop_downs[index - 1][0]])
+
+        except pyodbc.Error as e:
+            print(f"Error: {e}")
+
+        self.ui.planDropdown.clear()
+        self.ui.planDropdown.addItem("None")
+
+        if(index == 0):
+            return
+
         if len(plans) > 0:
             self.plan_drop_downs = plans
-            self.ui.planDropdown.addItem("None")
             self.ui.planDropdown.addItems([item[1] for item in plans])
 
     def dropDownSelect(self, index):
@@ -171,18 +196,48 @@ class MyWindow(QMainWindow):
             self.switchBuilderWidget(True)
             self.switchProjectWidget(True)
             self.switchPlanWidget(True)
+            self.switchEOWidget(True)
+
+            self.ui.addEO.hide()
+            self.ui.addProject.hide()
+            self.ui.addPlan.hide()
         else:
             self.switchBuilderWidget(False)
             self.switchProjectWidget(False)
             self.switchPlanWidget(False)
+            self.switchEOWidget(False)
+
+            self.ui.addEO.show()
+            self.ui.addProject.show()
+            self.ui.addPlan.show()
 
     def projectButton(self):
         if(not self.newProject):
             self.switchProjectWidget(True)
             self.switchPlanWidget(True)
+            self.switchEOWidget(True)
+
+            self.ui.addEO.hide()
+            self.ui.addPlan.hide()
         else:
             self.switchProjectWidget(False)
             self.switchPlanWidget(False)
+            self.switchEOWidget(False)
+
+            self.ui.addEO.show()
+            self.ui.addPlan.show()
+
+    def EOButton(self):
+        if(not self.newEO):
+            self.switchEOWidget(True)
+            self.switchPlanWidget(True)
+
+            self.ui.addPlan.hide()
+        else:
+            self.switchEOWidget(False)
+            self.switchPlanWidget(False)
+
+            self.ui.addPlan.show()
 
     def planButton (self):
         if(not self.newPlan):
@@ -191,6 +246,8 @@ class MyWindow(QMainWindow):
             self.switchPlanWidget(False)
     
     def switchBuilderWidget(self, newBuilder):
+        self.ui.addBuilder.show()
+
         if(newBuilder):
             self.ui.builderDropdown.hide()
             self.ui.builderInput.show()
@@ -204,6 +261,8 @@ class MyWindow(QMainWindow):
         self.newBuilder = newBuilder
 
     def switchProjectWidget(self, newProject):
+        self.ui.addProject.show()
+
         if(newProject):
             self.ui.projectDropdown.hide()
             self.ui.projectInput.show()
@@ -216,7 +275,24 @@ class MyWindow(QMainWindow):
         self.ui.projectInput.setText("")
         self.newProject = newProject
 
+    def switchEOWidget(self, newEO):
+        self.ui.addEO.show()
+
+        if(newEO):
+            self.ui.eoDropdown.hide()
+            self.ui.eoInput.show()
+            self.ui.addEO.setText("Select EO")
+        else:
+            self.ui.eoDropdown.show()
+            self.ui.eoInput.hide()
+            self.ui.addEO.setText("Add EO")
+
+        self.ui.projectInput.setText("")
+        self.newEO = newEO
+
     def switchPlanWidget(self, newPlan):
+        self.ui.addPlan.show()
+
         if(newPlan):
             self.ui.planDropdown.hide()
             self.ui.planInput.show()
@@ -348,7 +424,7 @@ class MyWindow(QMainWindow):
             if(self.newPlan):
                 self.job_info.insert(1, "planNumber", [self.ui.planInput.text()], True)
             else:
-                retrieved_job_info = self.drop_down_values[planIndex]
+                retrieved_job_info = self.plan_drop_downs[planIndex]
                 selected_plan = self.plan_drop_downs[planIndex]
                 
                 self.job_info.insert(1, "planNumber", [selected_plan[1]], True)
@@ -439,37 +515,57 @@ class MyWindow(QMainWindow):
             print("Finished Adding Stock Cabinets")
 
             #Adding Parts to Table 
-            """ self.parts["Quantity"] = self.parts.groupby(['Cabinet ID', 'Part ID'])['Cabinet ID'].transform('size')
-            unique_parts = self.parts.drop_duplicates(subset=['Cabinet ID', 'Part ID'], keep='first').copy()
+            self.parts["Quantity"] = self.parts.groupby(['Cabinet ID', 'Part ID', 'Width', 'Length'])['Cabinet ID'].transform('size')
+            unique_parts = self.parts.drop_duplicates(subset=['Cabinet ID', 'Part ID', 'Width', 'Length'], keep='first').copy()
             print(unique_parts)
             unique_parts["jobInfoIDFK"] = job_info_id
             unique_parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
-            unique_parts = unique_parts.drop(columns=["Cabinet ID", "Image"])
-            unique_parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False) """
+            unique_parts = unique_parts.drop(columns=["Cabinet ID", "Image", "IntBandMaterial", "IntBandColor", "ExtBandMaterial", "ExtBandColor", "DoorBandMaterial", "DoorBandColor", "TextureFace", "TextureBack", "TextureEdge", "Parameters"])
+            unique_parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False)
 
-            print(self.parts)
+            """ print(self.parts)
             self.parts["jobInfoIDFK"] = job_info_id
             self.parts["cabinetIDFK"] = self.parts["Cabinet ID"].map(cabinetID_dict)
             self.parts = self.parts.drop(columns=["Cabinet ID", "Image", "IntBandMaterial", "IntBandColor", "ExtBandMaterial", "ExtBandColor", "DoorBandMaterial", "DoorBandColor", "TextureFace", "TextureBack", "TextureEdge", "Parameters"])
-            self.parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False)
+            self.parts.to_sql("CV_Parts", server_engine, if_exists="append", index=False) """
             print("Finished Adding Parts")
 
             #Reset Tables
-            self.retrieveTables()
 
+            self.retrieveBuilders()
+            self.retrieveTables()
             self.resetDropDowns()
     
     def resetDropDowns(self):
         #Change inputs and dropdowns
-        self.ui.planDropdown.show()
-        self.ui.planInput.hide()
-        self.newPlan = False
-
-        self.ui.projectDropdown.show()
-        self.ui.projectInput.hide()
-        self.newProject = False
+        self.switchBuilderWidget(False)
+        self.switchPlanWidget(False)
+        self.switchProjectWidget(False)
 
 if __name__ == "__main__":
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
+    prodServer = config['DEFAULT']['prodServer']
+    reportURL = config['DEFAULT']['reportURL']
+
+    #Database connections
+    server_string = f"server={prodServer};Database=EXCELCVJ;Trusted_Connection=Yes;Driver={{ODBC Driver 17 for SQL Server}}"
+    server_url = URL.create("mssql+pyodbc", query={"odbc_connect": server_string})
+    server_engine = create_engine(server_url)
+
+    Server_session = sessionmaker(bind=server_engine)
+    server_session = Server_session()
+
+    cv_string = r"server=ECSERVER\SOLID;Database=CVData_2021;Trusted_Connection=Yes;Driver={ODBC Driver 17 for SQL Server}"
+    cv_url = URL.create("mssql+pyodbc", query={"odbc_connect": cv_string})
+    cv_engine = create_engine(cv_url)
+
+    report_string = f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={reportURL}"
+    report_url = URL.create("access+pyodbc", query={"odbc_connect": report_string})
+    report_engine = create_engine(report_url)
+
+
     app = QApplication(sys.argv)
     window = MyWindow()
     window.show()
